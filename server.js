@@ -31,7 +31,7 @@ app.use(bodyParser.json());
 
 // Swagger Configuration
 // Swagger Configuration
-const swaggerUi = require('swagger-ui-express');
+// Swagger Configuration
 const swaggerJsdoc = require('swagger-jsdoc');
 
 const swaggerOptions = {
