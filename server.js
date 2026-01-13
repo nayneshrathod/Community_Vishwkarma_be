@@ -24,7 +24,7 @@ const compression = require('compression');
 const helmet = require('helmet');
 
 // Middleware
-app.use(helmet());
+app.use(helmet({ contentSecurityPolicy: false })); // Disable CSP to allow Swagger CDN
 app.use(compression());
 app.use(cors());
 app.use(bodyParser.json());
@@ -70,8 +70,12 @@ const swaggerOptions = {
 
 const swaggerDocs = swaggerJsdoc(swaggerOptions);
 const CSS_URL = "https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/4.1.0/swagger-ui.min.css";
+const JS_URL = "https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/4.1.0/swagger-ui-bundle.min.js";
 
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs, { customCssUrl: CSS_URL }));
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs, { 
+    customCssUrl: CSS_URL,
+    customJs: JS_URL
+}));
 
 // Routes
 app.use('/api/auth', authRoutes);
