@@ -69,18 +69,42 @@ const swaggerOptions = {
 };
 
 const swaggerDocs = swaggerJsdoc(swaggerOptions);
-const CSS_URL = "https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/4.1.0/swagger-ui.min.css";
-// CDN links for Swagger UI Bundle and Standalone Preset
-const JS_URL = [
-    "https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/4.1.0/swagger-ui-bundle.min.js",
-    "https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/4.1.0/swagger-ui-standalone-preset.min.js"
-];
 
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs, { 
-    customCssUrl: CSS_URL,
-    customJs: JS_URL,
-    customSiteTitle: "Community App API Docs"
-}));
+app.get('/api-docs', (req, res) => {
+    const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Community App API Docs</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.18.2/swagger-ui.min.css" />
+    <style>
+        html { box-sizing: border-box; overflow: -moz-scrollbars-vertical; overflow-y: scroll; }
+        *, *:before, *:after { box-sizing: inherit; }
+        body { margin: 0; background: #fafafa; }
+    </style>
+</head>
+<body>
+    <div id="swagger-ui"></div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.18.2/swagger-ui-bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.18.2/swagger-ui-standalone-preset.min.js"></script>
+    <script>
+        window.onload = function() {
+            const ui = SwaggerUIBundle({
+                spec: ${JSON.stringify(swaggerDocs)},
+                dom_id: '#swagger-ui',
+                presets: [
+                    SwaggerUIBundle.presets.apis,
+                    SwaggerUIStandalonePreset
+                ],
+                layout: "StandaloneLayout",
+            });
+        };
+    </script>
+</body>
+</html>`;
+    res.send(html);
+});
 
 // Routes
 app.use('/api/auth', authRoutes);
