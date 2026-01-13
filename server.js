@@ -70,11 +70,16 @@ const swaggerOptions = {
 
 const swaggerDocs = swaggerJsdoc(swaggerOptions);
 const CSS_URL = "https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/4.1.0/swagger-ui.min.css";
-const JS_URL = "https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/4.1.0/swagger-ui-bundle.min.js";
+// CDN links for Swagger UI Bundle and Standalone Preset
+const JS_URL = [
+    "https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/4.1.0/swagger-ui-bundle.min.js",
+    "https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/4.1.0/swagger-ui-standalone-preset.min.js"
+];
 
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs, { 
     customCssUrl: CSS_URL,
-    customJs: JS_URL
+    customJs: JS_URL,
+    customSiteTitle: "Community App API Docs"
 }));
 
 // Routes
