@@ -84,6 +84,10 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/locations', locationRoutes);
 app.use('/uploads', express.static('uploads'));
 
+app.get('/', (req, res) => {
+    res.send('Backend is running successfully!');
+});
+
 // Database Connection
 mongoose.connect(MONGO_URI)
     .then(() => {
