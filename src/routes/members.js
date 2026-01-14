@@ -46,14 +46,7 @@ const router = express.Router();
  */
 
 // Multer Configuration
-const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        cb(null, 'uploads/');
-    },
-    filename: function (req, file, cb) {
-        cb(null, Date.now() + path.extname(file.originalname)); // Append extension
-    }
-});
+const storage = multer.memoryStorage();
 
 const upload = multer({ storage: storage });
 
@@ -349,11 +342,12 @@ router.post('/', verifyToken, checkPermission('member.create'), upload.fields([{
         // Handle File Upload
         if (req.files) {
             if (req.files['photo']) {
-                // Save relative path
-                payload.photoUrl = `uploads/${req.files['photo'][0].filename}`;
+                const b64 = Buffer.from(req.files['photo'][0].buffer).toString('base64');
+                payload.photoUrl = `data:${req.files['photo'][0].mimetype};base64,${b64}`;
             }
             if (req.files['spousePhoto']) {
-                payload.spousePhotoUrl = `uploads/${req.files['spousePhoto'][0].filename}`;
+                const b64 = Buffer.from(req.files['spousePhoto'][0].buffer).toString('base64');
+                payload.spousePhotoUrl = `data:${req.files['spousePhoto'][0].mimetype};base64,${b64}`;
             }
         }
 
@@ -492,10 +486,12 @@ router.put('/:id', verifyToken, checkPermission('member.edit'), upload.fields([
         // Handle Files
         if (req.files) {
             if (req.files['photo']) {
-                updates.photoUrl = `uploads/${req.files['photo'][0].filename}`;
+                const b64 = Buffer.from(req.files['photo'][0].buffer).toString('base64');
+                updates.photoUrl = `data:${req.files['photo'][0].mimetype};base64,${b64}`;
             }
             if (req.files['spousePhoto']) {
-                updates.spousePhotoUrl = `uploads/${req.files['spousePhoto'][0].filename}`;
+                const b64 = Buffer.from(req.files['spousePhoto'][0].buffer).toString('base64');
+                updates.spousePhotoUrl = `data:${req.files['spousePhoto'][0].mimetype};base64,${b64}`;
             }
         }
 
