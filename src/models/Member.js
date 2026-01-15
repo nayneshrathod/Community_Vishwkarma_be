@@ -22,6 +22,7 @@ const MemberSchema = new mongoose.Schema({
     photoUrl: { type: String },
     spousePhotoUrl: { type: String }, // New Field
     spouseLastName: { type: String }, // New Field
+    spouseMiddleName: { type: String }, // New Field
 
     // Relationships
     familyId: { type: String, default: 'FNew' },
@@ -54,7 +55,8 @@ MemberSchema.index({
     city: 'text', 
     village: 'text',
     memberId: 'text',
-    phone: 'text'
+    phone: 'text',
+    spouseMiddleName: 'text' // Added index
 });
 
 // Optimized Sort Index
