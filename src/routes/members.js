@@ -118,6 +118,7 @@ router.get('/', verifyToken, checkPermission('member.view'), async (req, res) =>
             } else {
                 // RESTRICTED: Can ONLY see their own family
                 // Fetch the logged-in user's full member profile to determine their family
+                /* 
                 let myMemberProfile = null;
                 if (req.user.memberId) {
                     myMemberProfile = await Member.findOne({ memberId: req.user.memberId });
@@ -133,48 +134,94 @@ router.get('/', verifyToken, checkPermission('member.view'), async (req, res) =>
                         return res.json({ data: [], total: 0, page, pages: 0 });
                     }
                 }
+                */
+               // TEMPORARY: Allow all members to see the list until RBAC is fully defined
             }
         }
+        
+        const andConditions = [];
 
         if (search) {
-            // Optimized Text Search (Fast)
-            query.$text = { $search: search };
+            // Optimized "Like" Search using Regex (Partial Matching)
+            const searchRegex = { $regex: search, $options: 'i' }; // Case-insensitive, partial
             
-            // Note: Partial matching for ID or phone might still need regex if not covered by text index perfectly,
-            // but for names/cities text index is 10x faster.
-            // If text search fails to find partial matches (e.g. 'Vish' for 'Vishwkarma'), we can keep a fallback:
-            // Actually, for broad compatibility let's keep it simple: 
-            // If user searches 1 word -> Text Search.
-            // If user searches partial -> Text might miss substrings.
-            // Compromise: Use Text Search for performance, but if result is 0, fall back to Regex? 
-            // Better: For now, stick to Regex because users expect partial match (e.g. '9822' matching '98220...').
-            // Text search matches *words*.
-            
-            // To be safe and "Fast" but "Accurate":
-            // We KEEP Regex but stick to indexed fields.
-            // The previous code was fine logic-wise, but slow.
-            // Let's optimize the REGEX itself.
-            const searchRegex = { $regex: search, $options: 'i' };
-            const searchOr = [
-                { firstName: searchRegex },
-                { lastName: searchRegex },
-                { memberId: searchRegex }
-                // Searching too many fields is what makes it slow.
-                // Limit regex to key fields.
-            ];
-            
-            if (Object.keys(query).length > 0) {
-                query = { $and: [query, { $or: searchOr }] };
-            } else {
-                query.$or = searchOr;
-            }
+            andConditions.push({
+                $or: [
+                    { firstName: searchRegex },
+                    { lastName: searchRegex },
+                    { middleName: searchRegex },
+                    { city: searchRegex },
+                    { village: searchRegex },
+                    { memberId: searchRegex },
+                    { phone: searchRegex },
+                    { spouseMiddleName: searchRegex }
+                ]
+            });
         }
 
+        // Advanced Filters (AND logic)
+        const { name, state, district, city, village } = req.query; // Removed individual name fields
+        
+        // Single Input Name Filter (Matches First OR Middle OR Last)
+        if (name) {
+            const nameRegex = { $regex: name, $options: 'i' };
+            andConditions.push({
+                $or: [
+                    { firstName: nameRegex },
+                    { middleName: nameRegex },
+                    { lastName: nameRegex }
+                ]
+            });
+        }
+
+        // Single Input Location Filter (Matches State OR District OR City OR Village)
+        const { location } = req.query;
+        if (location) {
+            const locRegex = { $regex: location, $options: 'i' };
+            andConditions.push({
+                $or: [
+                    { city: locRegex },
+                    { village: locRegex },
+                    { district: locRegex },
+                    { state: locRegex }
+                ]
+            });
+        }
+
+        // Contact Filter (Matches Phone)
+        const { contact } = req.query;
+        if (contact) {
+            andConditions.push({ phone: { $regex: contact, $options: 'i' } });
+        }
+
+
+        if (state) query.state = { $regex: state, $options: 'i' };
+        if (district) query.district = { $regex: district, $options: 'i' };
+        if (city) query.city = { $regex: city, $options: 'i' };
+        if (village) query.village = { $regex: village, $options: 'i' };
+
+        // Apply AND conditions if any
+        if (andConditions.length > 0) {
+            query.$and = andConditions;
+        }
+
+
         const total = await Member.countDocuments(query);
-        // Optimization: .lean() is already used, which is good.
+        
+        // Sorting
+        const { sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
+        const sortOptions = {};
+        sortOptions[sortBy] = sortOrder === 'asc' ? 1 : -1;
+
         // Ensure 'createdAt' is indexed for this sort to be fast.
+
+        console.log('--- GET /members Debug ---');
+        console.log('User:', req.user);
+        console.log('Query Params:', req.query);
+        console.log('Mongo Query:', JSON.stringify(query, null, 2));
+
         const members = await Member.find(query)
-            .sort({ createdAt: -1 })
+            .sort(sortOptions)
             .skip(skip)
             .limit(limit)
             .lean();
@@ -480,6 +527,7 @@ router.post('/', verifyToken, checkPermission('member.create'), upload.fields([{
                 const spousePayload = {
                     memberId: await generateMemberId(),
                     firstName: payload.spouseName,
+                    middleName: payload.spouseMiddleName || '', // Use provided or empty
                     // Fix: Only inherit lastName if creating a Wife (Head is Male). 
                     // If creating Husband (Head is Female), do not inherit unless explicitly provided.
                     lastName: payload.spouseLastName || (payload.gender === 'Male' ? payload.lastName : ''),

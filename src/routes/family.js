@@ -32,15 +32,44 @@ router.get('/my-family', verifyToken, async (req, res) => {
         const currentMember = await Member.findOne({ memberId });
         if (!currentMember) return res.status(404).json({ message: 'Member profile not found' });
 
-        // 2. Fetch all members in this family
-        const familyMembers = await Member.find({ familyId: currentMember.familyId });
+        // 2. Fetch Core Family (Same Family ID)
+        const coreFamily = await Member.find({ familyId: currentMember.familyId });
+        
+        // 3. Extended Search (Fetch relatives in different Family IDs)
+        // Collect IDs of core family to find their relatives
+        const coreIds = coreFamily.map(m => m._id);
+        const coreMemberIds = coreFamily.map(m => m.memberId);
+        const parentIds = coreFamily.flatMap(m => [m.fatherId, m.motherId]).filter(id => id);
 
-        // 3. For each member, check if they have a User account and fetch its permissions
-        const familyData = await Promise.all(familyMembers.map(async (member) => {
+        // Find:
+        // A. Parents of Core Members (if not in core)
+        // B. Children of Core Members (if not in core, e.g. married daughters)
+        // C. Siblings of Core Members (share parents, e.g. married sisters)
+        
+        const extendedMembers = await Member.find({
+            familyId: { $ne: currentMember.familyId }, // Exclude already found
+            $or: [
+                { _id: { $in: parentIds } }, // Parents
+                { fatherId: { $in: coreIds } }, // Children (Father is core)
+                { motherId: { $in: coreIds } }, // Children (Mother is core)
+                // Siblings: Share a parent with any core member (who has parents)
+                // We need to match against the *parents* of the core members
+                { fatherId: { $in: parentIds } },
+                { motherId: { $in: parentIds } }
+            ]
+        });
+
+        const allMembers = [...coreFamily, ...extendedMembers];
+        
+        // Remove duplicates (just in case)
+        const uniqueMembers = Array.from(new Map(allMembers.map(item => [item['memberId'], item])).values());
+
+        // 4. For each member, check if they have a User account and fetch its permissions
+        const familyData = await Promise.all(uniqueMembers.map(async (member) => {
             const user = await User.findOne({ memberId: member.memberId }).select('username role permissions isVerified');
             return {
                 member: member,
-                user: user || null // Null if they (somehow) don't have an account
+                user: user || null
             };
         }));
 
