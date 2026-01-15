@@ -652,6 +652,23 @@ router.put('/:id', verifyToken, checkPermission('member.edit'), upload.fields([
             }
         }
 
+        // BUNDLE SPOUSE DATA (Flat -> Nested for update)
+        if (updates.spouseName) {
+            updates.spouse = {
+                firstName: updates.spouseName,
+                middleName: updates.spouseMiddleName,
+                lastName: updates.spouseLastName,
+                gender: updates.spouseGender,
+                dob: updates.spouseDob,
+                memberId: updates.spouseMemberId, // If provided
+                // If main member has spouseId, we might not need to pass it here, upsertRecursive uses savedMember.spouseId
+            };
+            // If photo updated
+            if (updates.spousePhotoUrl) {
+                updates.spouse.photoUrl = updates.spousePhotoUrl;
+            }
+        }
+
         // Use Recursive Helper
         const updatedMember = await upsertMemberRecursive(updates, {});
 
