@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const express = require('express');
 const router = express.Router();
 
@@ -143,6 +144,123 @@ router.put('/permissions/:targetMemberId', verifyToken, async (req, res) => {
         res.json({ message: 'Permissions updated successfully', permissions: targetUser.permissions });
 
     } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * @swagger
+ * /api/family/tree-data/{memberId}:
+ *   get:
+ *     summary: Get complete family tree data for a specific member
+ *     tags: [Family]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: memberId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: List of family members for the tree
+ */
+router.get('/tree-data/:memberId', verifyToken, async (req, res) => {
+    try {
+        const { memberId } = req.params;
+
+        // 1. Fetch Target Member
+        // Try finding by Mongo ID first, then Member ID
+        let targetMember;
+        if (mongoose.Types.ObjectId.isValid(memberId)) {
+            targetMember = await Member.findById(memberId);
+        }
+        if (!targetMember) {
+            targetMember = await Member.findOne({ memberId: memberId });
+        }
+
+        if (!targetMember) {
+            return res.status(404).json({ message: 'Member not found' });
+        }
+
+        // 2. Fetch Core Family (Same Family ID)
+        // If target has no family ID, core family is just them
+        let coreFamily = [];
+        if (targetMember.familyId && targetMember.familyId !== 'Unassigned' && targetMember.familyId !== 'FNew') {
+            coreFamily = await Member.find({ familyId: targetMember.familyId });
+        } else {
+            coreFamily = [targetMember];
+        }
+
+        // 3. Extended Search (Cross-Family)
+        // We want to find:
+        // - Parents of Core Members (even if in different family)
+        // - Children of Core Members (even if in different family)
+        // - Spouses of ALL the above (Core + Extended)
+
+        const coreIds = coreFamily.map(m => m._id);
+        const coreMongoIds = coreFamily.map(m => m._id); // ensure ObjectIds
+
+        // Find direct relatives (Parents or Children) of the Core Family who are NOT in the Core Family
+        const extendedRelatives = await Member.find({
+            familyId: { $ne: targetMember.familyId }, // different family
+            $or: [
+                { _id: { $in: coreFamily.flatMap(m => [m.fatherId, m.motherId]).filter(Boolean) } }, // Parents of core
+                { fatherId: { $in: coreMongoIds } }, // Children of core
+                { motherId: { $in: coreMongoIds } }  // Children of core
+            ]
+        });
+
+        // Combine Core + Extended so far
+        let knownMembers = [...coreFamily, ...extendedRelatives];
+        const knownIds = knownMembers.map(m => m._id);
+
+        // 3.5. Fetch Level 2 Extended (Grandchildren, Siblings, etc.)
+        // We want children of the "Extended Relatives" we just found.
+        // e.g. If we found a "Married Daughter" (Extended), we want her children (Grandkids).
+        // e.g. If we found a "Father" (Extended), we want his other children (Siblings).
+        
+        const extendedIds = extendedRelatives.map(m => m._id); // ensure ObjectIds
+
+        const level2Relatives = await Member.find({
+            familyId: { $ne: targetMember.familyId }, // Still exclude core (already have them)
+            $and: [{ _id: { $nin: knownIds } }], // Exclude what we already have
+            $or: [
+                { fatherId: { $in: extendedIds } },
+                { motherId: { $in: extendedIds } }
+            ]
+        });
+
+        knownMembers = [...knownMembers, ...level2Relatives];
+        // Re-calc knownIds
+        const allKnownIds = knownMembers.map(m => m._id);
+
+        // 4. Fetch Spouses of EVERYONE found so far (Core + L1 + L2)
+        const spouseIdsToFind = knownMembers.map(m => m.spouseId).filter(Boolean);
+
+        const spouses = await Member.find({
+            $or: [
+                { _id: { $in: spouseIdsToFind } }, // Spouses referenced by known members
+                { spouseId: { $in: allKnownIds } }    // Members referencing known members as spouse
+            ]
+        });
+
+        // 5. Merge and Unique
+        const allMembers = [...knownMembers, ...spouses];
+        
+        // Remove duplicates based on _id
+        const uniqueMembersMap = new Map();
+        allMembers.forEach(m => {
+            uniqueMembersMap.set(m._id.toString(), m);
+        });
+
+        const finalMemberList = Array.from(uniqueMembersMap.values());
+
+        res.json(finalMemberList);
+
+    } catch (err) {
+        console.error("Tree Data Error:", err);
         res.status(500).json({ error: err.message });
     }
 });

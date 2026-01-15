@@ -154,7 +154,11 @@ router.get('/', verifyToken, checkPermission('member.view'), async (req, res) =>
                     { village: searchRegex },
                     { memberId: searchRegex },
                     { phone: searchRegex },
-                    { spouseMiddleName: searchRegex }
+                    { spouseMiddleName: searchRegex },
+                    // Added for Primary Member Search
+                    { occupation: searchRegex },
+                    { state: searchRegex },
+                    { district: searchRegex }
                 ]
             });
         }
