@@ -2,7 +2,7 @@
 #!/bin/bash
 
 # Login
-LOGIN_RESP=$(curl -s -X POST http://localhost:3000/api/auth/login \
+LOGIN_RESP=$(curl -s -X POST https://vishwa-backend-wggt.vercel.app/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username": "admin", "password": "admin123"}')
 
@@ -18,7 +18,7 @@ echo "Auth Token: $TOKEN"
 
 # Test 1: Create Main Member
 echo ">>> Testing Main Member Upload..."
-curl -v -X POST http://localhost:3000/api/members \
+curl -v -X POST https://vishwa-backend-wggt.vercel.app/api/members \
   -H "Authorization: Bearer $TOKEN" \
   -F "firstName=TestMain" \
   -F "lastName=User" \
@@ -35,7 +35,7 @@ echo ""
 
 # Test 2: Create Child
 echo ">>> Testing Child Upload..."
-curl -v -X POST http://localhost:3000/api/members \
+curl -v -X POST https://vishwa-backend-wggt.vercel.app/api/members \
   -H "Authorization: Bearer $TOKEN" \
   -F "firstName=TestChild" \
   -F "lastName=User" \
