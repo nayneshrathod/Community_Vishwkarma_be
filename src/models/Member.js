@@ -15,6 +15,7 @@ const MemberSchema = new mongoose.Schema({
         dob: { type: Date, required: true },
         gender: { type: String, enum: ['Male', 'Female'], required: true },
         life_status: { type: String, enum: ['Alive', 'Deceased'], default: 'Alive' },
+        showOnMatrimony: { type: Boolean, default: true },
         blood_group: { type: String },
         biodata: {
             education: { type: String },
@@ -165,6 +166,16 @@ MemberSchema.virtual('age').get(function () {
     if (!this.dob) return null;
     return Math.floor((Date.now() - this.dob) / (365.25 * 24 * 60 * 60 * 1000));
 });
+
+// Virtual for showOnMatrimony (Alias to personal_info.showOnMatrimony)
+MemberSchema.virtual('showOnMatrimony')
+    .get(function () {
+        return this.personal_info && this.personal_info.showOnMatrimony;
+    })
+    .set(function (v) {
+        if (!this.personal_info) this.personal_info = {};
+        this.personal_info.showOnMatrimony = v;
+    });
 
 // Indexes for optimized searching and filtering
 // Compound Text Index for fast full-text search across multiple fields

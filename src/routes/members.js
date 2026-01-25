@@ -95,6 +95,7 @@ const upload = multer({
  *                 $ref: '#/components/schemas/Member'
  */
 // Get All Members (Search/Filter support & Pagination)
+// Get All Members (Search/Filter support & Pagination)
 router.get('/', verifyToken, checkPermission('member.view'), async (req, res) => {
     try {
         const { search, familyId, isPrimary } = req.query;
@@ -114,6 +115,14 @@ router.get('/', verifyToken, checkPermission('member.view'), async (req, res) =>
             query.isPrimary = true;
             isPrimaryBool = true;
             console.log('[DEBUG] Filtering by Primary Member Status');
+        }
+
+        // Filter by Matrimony Privacy Flag
+        const { showOnMatrimony } = req.query;
+        if (showOnMatrimony && showOnMatrimony.toString().toLowerCase().trim() === 'true') {
+            // Target the correct nested path in MongoDB
+            query['personal_info.showOnMatrimony'] = true;
+            console.log('[DEBUG] Filtering for Matrimony Portal (Visible Only)');
         }
 
         // ROLE-BASED ACCESS CONTROL
@@ -192,7 +201,6 @@ router.get('/', verifyToken, checkPermission('member.view'), async (req, res) =>
 
         // Advanced Filters (AND logic)
         const { name, state, district, city, village } = req.query; 
-
         // Single Input Name Filter (Matches First OR Middle OR Last OR Full Name)
         if (name) {
             const safeName = escapeRegex(name.trim());
@@ -447,7 +455,15 @@ function mapFlatToNested(payload) {
     if (payload.village) result['geography.village'] = payload.village;
     if (payload.address) result['geography.full_address'] = clean(payload.address);
 
-    // 6. Resolved Names (Persist to root for easy display/search)
+    // 6. Matrimony Privacy Flag
+    if (payload.showOnMatrimony !== undefined) {
+        // Handle string 'true'/'false' from FormData
+        const val = String(payload.showOnMatrimony).toLowerCase() === 'true';
+        result['personal_info.showOnMatrimony'] = val;
+        result.showOnMatrimony = val; // Also set at root if needed for virtuals/legacy, but strictly it's in personal_info
+    }
+
+    // 7. Resolved Names (Persist to root for easy display/search)
     if (payload.fullName) result.fullName = payload.fullName;
     if (payload.stateName) result.stateName = payload.stateName;
     if (payload.districtName) result.districtName = payload.districtName;
@@ -698,6 +714,7 @@ router.post('/', verifyToken, checkPermission('member.create'), upload.fields([{
                 dob: payload.dob,
                 gender: payload.gender,
                 life_status: 'Alive', // Default
+                showOnMatrimony: String(payload.showOnMatrimony).toLowerCase() === 'true', // Add Matrimony Flag
                 biodata: {
                     education: payload.education,
                     height: payload.height,
