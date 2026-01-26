@@ -4,6 +4,7 @@ const Marriage = require('../models/Marriage');
 const { verifyToken, checkPermission } = require('../middleware/authMiddleware');
 const multer = require('multer');
 const path = require('path');
+const cacheService = require('../services/cache.service');
 const router = express.Router();
 
 /**
@@ -108,6 +109,11 @@ router.get('/', verifyToken, checkPermission('member.view'), async (req, res) =>
         const skip = limit === 0 ? 0 : (page - 1) * limit;
 
         let query = {};
+        
+        // Default: Only show Alive members unless explicitly asked otherwise
+        if (!req.query.showDeceased || req.query.showDeceased.toString().toLowerCase() !== 'true') {
+            query['personal_info.life_status'] = { $ne: 'Deceased' };
+        }
 
         // Filter by Primary Status if requested
         let isPrimaryBool = false;
@@ -238,10 +244,51 @@ router.get('/', verifyToken, checkPermission('member.view'), async (req, res) =>
         }
 
 
-        if (state) query.state = { $regex: escapeRegex(state.trim()), $options: 'i' };
-        if (district) query.district = { $regex: escapeRegex(district.trim()), $options: 'i' };
-        if (city) query.city = { $regex: escapeRegex(city.trim()), $options: 'i' };
-        if (village) query.village = { $regex: escapeRegex(village.trim()), $options: 'i' };
+        if (state) {
+            const safeState = escapeRegex(state.trim());
+            const stateRegex = { $regex: safeState, $options: 'i' };
+            andConditions.push({
+                $or: [
+                    { state: stateRegex },
+                    { stateName: stateRegex },
+                    { 'geography.state': stateRegex }
+                ]
+            });
+        }
+        if (district) {
+            const safeDistrict = escapeRegex(district.trim());
+            const districtRegex = { $regex: safeDistrict, $options: 'i' };
+            andConditions.push({
+                $or: [
+                    { district: districtRegex },
+                    { districtName: districtRegex },
+                    { 'geography.district': districtRegex }
+                ]
+            });
+        }
+        if (city) {
+            const safeCity = escapeRegex(city.trim());
+            const cityRegex = { $regex: safeCity, $options: 'i' };
+            andConditions.push({
+                $or: [
+                    { city: cityRegex },
+                    { taluka: cityRegex },
+                    { talukaName: cityRegex },
+                    { 'geography.taluka': cityRegex }
+                ]
+            });
+        }
+        if (village) {
+            const safeVillage = escapeRegex(village.trim());
+            const villageRegex = { $regex: safeVillage, $options: 'i' };
+            andConditions.push({
+                $or: [
+                    { village: villageRegex },
+                    { villageName: villageRegex },
+                    { 'geography.village': villageRegex }
+                ]
+            });
+        }
         if (req.query.fatherId) query.fatherId = req.query.fatherId;
         if (req.query.motherId) query.motherId = req.query.motherId;
 
@@ -353,8 +400,13 @@ router.get('/:id', verifyToken, checkPermission('member.view'), async (req, res)
 // Helper to generate IDs
 // Helper Functions (Global Scope)
 async function generateMemberId() {
-    const count = await Member.countDocuments();
-    return `M${(count + 1).toString().padStart(4, '0')}`;
+    const lastMember = await Member.findOne({ memberId: /^M\d+$/ }).sort({ memberId: -1 });
+    if (lastMember && lastMember.memberId) {
+        // Extract number from M0001
+        const num = parseInt(lastMember.memberId.substring(1)) + 1;
+        return `M${num.toString().padStart(4, '0')}`;
+    }
+    return 'M0001';
 }
 
 async function generateFamilyId() {
@@ -389,19 +441,29 @@ function mapFlatToNested(payload) {
         result['personal_info.names.last_name'] = ln;
         result.lastName = ln;
     }
+    if (payload.prefix !== undefined) {
+        result['personal_info.names.prefix'] = payload.prefix;
+        result.prefix = payload.prefix;
+    }
+    if (payload.lifeStatus !== undefined) {
+        result['personal_info.life_status'] = payload.lifeStatus;
+        result.lifeStatus = payload.lifeStatus;
+    }
 
     // 2. Full Name Calculation (Backend Force)
     const f = clean(payload.firstName || '');
     const m = clean(payload.middleName || '');
     const l = clean(payload.lastName || '');
+    const p = clean(payload.prefix || '');
     if (f && l) {
-        result.fullName = `${f} ${m ? m + ' ' : ''}${l}`.replace(/\s+/g, ' ').trim();
+        result.fullName = `${p ? p + ' ' : ''}${f} ${m ? m + ' ' : ''}${l}`.replace(/\s+/g, ' ').trim();
     }
 
     // 3. Spouse Name Mapping (Explicit construction)
     let sfn = clean(payload.spouseName || '');
     const smn = clean(payload.spouseMiddleName || '');
     const sln = clean(payload.spouseLastName || '');
+    const sp = clean(payload.spousePrefix || '');
 
     // Fallback: If spouseDetails part of payload (common in recursive), 
     // we use them to ensure spouseName is set at root
@@ -414,6 +476,10 @@ function mapFlatToNested(payload) {
         result.spouseName = sfn;
         result.spouseMiddleName = smn;
         result.spouseLastName = sln;
+        result.spousePrefix = sp;
+        
+        // Calculate Spouse Full Name
+        result.spouseFullName = `${sp ? sp + ' ' : ''}${sfn} ${smn ? smn + ' ' : ''}${sln}`.replace(/\s+/g, ' ').trim();
     }
 
     // 4. Details & Bio
@@ -458,7 +524,9 @@ function mapFlatToNested(payload) {
     // 6. Matrimony Privacy Flag
     if (payload.showOnMatrimony !== undefined) {
         // Handle string 'true'/'false' from FormData
-        const val = String(payload.showOnMatrimony).toLowerCase() === 'true';
+        const isMarried = payload.maritalStatus === 'Married';
+        const isDeceased = (payload.lifeStatus === 'Deceased' || payload.prefix === 'Late');
+        const val = !isMarried && !isDeceased && String(payload.showOnMatrimony).toLowerCase() === 'true';
         result['personal_info.showOnMatrimony'] = val;
         result.showOnMatrimony = val; // Also set at root if needed for virtuals/legacy, but strictly it's in personal_info
     }
@@ -709,12 +777,13 @@ router.post('/', verifyToken, checkPermission('member.create'), upload.fields([{
                     first_name: payload.firstName,
                     middle_name: payload.middleName,
                     last_name: payload.lastName,
+                    prefix: payload.prefix, // Ensure prefix is mapped
                     maiden_name: payload.maidenName // Assuming frontend sends this if needed
                 },
                 dob: payload.dob,
                 gender: payload.gender,
-                life_status: 'Alive', // Default
-                showOnMatrimony: String(payload.showOnMatrimony).toLowerCase() === 'true', // Add Matrimony Flag
+                life_status: payload.lifeStatus || 'Alive', // Use payload or default to Alive
+                showOnMatrimony: payload.maritalStatus !== 'Married' && String(payload.showOnMatrimony).toLowerCase() === 'true' && (payload.lifeStatus !== 'Deceased'), // Add Matrimony Flag (Only for Single/Divorced/Widowed and ALIVE)
                 biodata: {
                     education: payload.education,
                     height: payload.height,
@@ -734,6 +803,25 @@ router.post('/', verifyToken, checkPermission('member.create'), upload.fields([{
                 village: payload.village,
                 full_address: payload.address
             };
+        }
+
+        // Calculate Main Member Full Name (Backend Force)
+        const p = payload.prefix ? payload.prefix.trim() : '';
+        const f = payload.firstName ? payload.firstName.trim() : '';
+        const m = payload.middleName ? payload.middleName.trim() : '';
+        const l = payload.lastName ? payload.lastName.trim() : '';
+        
+        if (f && l) {
+            payload.fullName = `${p ? p + ' ' : ''}${f} ${m ? m + ' ' : ''}${l}`.replace(/\s+/g, ' ').trim();
+        }
+
+        // Calculate Spouse Full Name (for persistence)
+        if (payload.spouseName) {
+            const sp = payload.spousePrefix ? payload.spousePrefix.trim() : '';
+            const sfn = (payload.spouseName || '').trim();
+            const smn = (payload.spouseMiddleName || '').trim();
+            const sln = (payload.spouseLastName || '').trim();
+            payload.spouseFullName = `${sp ? sp + ' ' : ''}${sfn} ${smn ? smn + ' ' : ''}${sln}`.replace(/\s+/g, ' ').trim();
         }
 
         const newMember = new Member(payload);
@@ -758,6 +846,9 @@ router.post('/', verifyToken, checkPermission('member.create'), upload.fields([{
         }
 
         const savedMember = await newMember.save();
+        
+        // Invalidate Dashboard Cache
+        cacheService.del(cacheService.KEYS.DASHBOARD_STATS);
 
         // ---------------------------------------------------------
         // HANDLE MARRIAGE LINKING (If spouseId provided)
@@ -789,6 +880,7 @@ router.post('/', verifyToken, checkPermission('member.create'), upload.fields([{
                             first_name: payload.spouseName,
                             middle_name: payload.spouseMiddleName || '',
                             last_name: payload.spouseLastName || (payload.gender === 'Male' ? payload.lastName : ''),
+                            prefix: payload.spousePrefix, // Ensure prefix is mapped
                         },
                         dob: payload.spouseDob || payload.dob,
                         gender: payload.spouseGender || (payload.gender === 'Male' ? 'Female' : 'Male'),
@@ -809,7 +901,14 @@ router.post('/', verifyToken, checkPermission('member.create'), upload.fields([{
                     firstName: payload.spouseName,
                     lastName: payload.spouseLastName || (payload.gender === 'Male' ? payload.lastName : ''),
                     gender: payload.spouseGender || (payload.gender === 'Male' ? 'Female' : 'Male'),
-                    dob: payload.spouseDob || payload.dob
+                    dob: payload.spouseDob || payload.dob,
+                    // Calculate Spouse's Own Full Name
+                    fullName: `${payload.spousePrefix ? payload.spousePrefix.trim() + ' ' : ''}${payload.spouseName} ${payload.spouseMiddleName ? payload.spouseMiddleName.trim() + ' ' : ''}${payload.spouseLastName || (payload.gender === 'Male' ? payload.lastName : '')}`.replace(/\s+/g, ' ').trim(),
+                    // Reciprocal Spouse Details (So the spouse record points back to the main member)
+                    spouseName: savedMember.firstName,
+                    spouseMiddleName: savedMember.middleName,
+                    spouseLastName: savedMember.lastName,
+                    spouseFullName: savedMember.fullName || `${savedMember.firstName} ${savedMember.middleName ? savedMember.middleName + ' ' : ''}${savedMember.lastName}`.trim(),
                 };
 
                 let savedSpouse;
@@ -914,7 +1013,17 @@ router.post('/', verifyToken, checkPermission('member.create'), upload.fields([{
 
         res.status(201).json(savedMember);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        if (err.name === 'ValidationError') {
+            const errors = Object.values(err.errors).map(val => ({
+                field: val.path,
+                message: val.message
+            }));
+            return res.status(400).json({ 
+                message: 'Validation Failed', 
+                errors: errors 
+            });
+        }
+        res.status(500).json({ message: err.message }); // Use 'message' standard
     }
 });
 
@@ -980,6 +1089,7 @@ router.put('/:id', verifyToken, checkPermission('member.edit'), upload.fields([
                 firstName: updates.spouseName,
                 middleName: updates.spouseMiddleName,
                 lastName: updates.spouseLastName,
+                prefix: updates.spousePrefix, // Map spousePrefix to prefix for the spouse member
                 gender: updates.spouseGender,
                 dob: updates.spouseDob,
                 memberId: updates.spouseMemberId, // If provided
@@ -994,6 +1104,9 @@ router.put('/:id', verifyToken, checkPermission('member.edit'), upload.fields([
 
         // Use Recursive Helper
         const updatedMember = await upsertMemberRecursive(updates, {});
+
+        // Invalidate dashboard cache when member is updated
+        cacheService.del(cacheService.KEYS.DASHBOARD_STATS);
 
         res.json(updatedMember);
 
@@ -1024,6 +1137,10 @@ router.put('/:id', verifyToken, checkPermission('member.edit'), upload.fields([
 router.delete('/:id', verifyToken, checkPermission('member.delete'), async (req, res) => {
     try {
         await Member.findByIdAndDelete(req.params.id);
+        
+        // Invalidate Dashboard Cache
+        cacheService.del(cacheService.KEYS.DASHBOARD_STATS);
+
         res.json({ message: 'Member deleted successfully' });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -1119,82 +1236,196 @@ router.post('/:id/create-family', verifyToken, checkPermission('member.edit'), a
  */
 router.get('/stats/dashboard', verifyToken, checkPermission('member.view'), async (req, res) => {
     try {
-        // Member Stats
-        const totalMembers = await Member.countDocuments();
-        const maleCount = await Member.countDocuments({ gender: 'Male' });
-        const femaleCount = await Member.countDocuments({ gender: 'Female' });
-        const primaryMemberCount = await Member.countDocuments({ isPrimary: true });
-
-        const unmarriedBoys = await Member.find({
-            gender: 'Male', maritalStatus: 'Single',
-            dob: { $lte: new Date(new Date().setFullYear(new Date().getFullYear() - 20)) }
-        }).limit(10);
-
-        const unmarriedGirls = await Member.find({
-            gender: 'Female', maritalStatus: 'Single',
-            dob: { $lte: new Date(new Date().setFullYear(new Date().getFullYear() - 18)) }
-        }).limit(10);
-
-        // Fund/Donation Stats - Query the actual Fund collection
-        let totalDonationAmount = 0;
-        let totalDonationCount = 0;
-        let recentDonations = [];
-        try {
-            const Fund = require('../models/Fund');
-            
-            // Get total donation amount using aggregation
-            const donationAgg = await Fund.aggregate([
-                { $group: { _id: null, totalAmount: { $sum: '$amount' }, count: { $sum: 1 } } }
-            ]);
-            
-            if (donationAgg.length > 0) {
-                totalDonationAmount = donationAgg[0].totalAmount || 0;
-                totalDonationCount = donationAgg[0].count || 0;
-            }
-
-            // Get recent donations (last 5)
-            recentDonations = await Fund.find()
-                .sort({ createdAt: -1 })
-                .limit(5)
-                .populate('memberId', 'firstName lastName memberId')
-                .lean();
-        } catch (fundErr) {
-            console.log('Fund model not available or error:', fundErr.message);
+        // Check cache first
+        const cached = cacheService.get(cacheService.KEYS.DASHBOARD_STATS);
+        if (cached) {
+            return res.json(cached);
         }
 
-        // Event Stats
-        let eventCount = 0;
-        let upcomingEvents = [];
-        try {
-            const Event = require('../models/Event');
-            eventCount = await Event.countDocuments({ date: { $gte: new Date() } });
-            upcomingEvents = await Event.find({ date: { $gte: new Date() } })
-                .sort({ date: 1 })
-                .limit(3)
-                .lean();
-        } catch (eventErr) {
-            console.log('Event model not available or error:', eventErr.message);
-        }
+        // =====================================================
+        // OPTIMIZED DASHBOARD AGGREGATION
+        // =====================================================
+        const Fund = require('../models/Fund');
+        const Event = require('../models/Event');
+        
+        const now = new Date();
+        const lastWeek = new Date(new Date().setDate(now.getDate() - 7));
+        const today = new Date();
 
-        // Family Stats
-        const uniqueFamilies = await Member.distinct('familyId', { familyId: { $ne: 'Unassigned', $nin: [null, ''] } });
-        const totalFamilies = uniqueFamilies.length;
-
-        res.json({
+        // Execution
+        const [
+            // 1. Basic Counts (Alive Only for directory population)
             totalMembers,
             maleCount,
             femaleCount,
+            marriedCount,
+            singleMaleCount,
+            singleFemaleCount,
             primaryMemberCount,
-            totalFamilies,
-            totalDonationAmount,
-            totalDonationCount,
-            recentDonations,
-            eventCount,
-            upcomingEvents,
-            unmarriedBoys,
-            unmarriedGirls
-        });
+            
+            // 2. Weekly Increments (Recent - Alive Only)
+            newMembersLastWeek,
+            newMalesLastWeek,
+            newFemalesLastWeek,
+            newMarriedLastWeek,
+            
+            // 3. Family Stats (Distinct families with at least one alive member)
+            distinctFamilies,
+
+            // 4. Complex Aggregations (Alive Only)
+            educationByGender,
+            ageDistribution,
+            maritalStatusStats,
+            genderRatioAge,
+            
+            // 5. Other Widget Data
+            recentMembers,
+            
+            // 6. Existing Stats (Financials/Events unrelated to member life status)
+            donationAgg,
+            upcomingEvents
+        ] = await Promise.all([
+            // Basic Counts (ALIVE ONLY)
+            Member.countDocuments({ 'personal_info.life_status': { $ne: 'Deceased' } }),
+            Member.countDocuments({ gender: 'Male', 'personal_info.life_status': { $ne: 'Deceased' } }),
+            Member.countDocuments({ gender: 'Female', 'personal_info.life_status': { $ne: 'Deceased' } }),
+            Member.countDocuments({ maritalStatus: 'Married', 'personal_info.life_status': { $ne: 'Deceased' } }),
+            Member.countDocuments({ gender: 'Male', maritalStatus: 'Single', 'personal_info.life_status': { $ne: 'Deceased' } }),
+            Member.countDocuments({ gender: 'Female', maritalStatus: 'Single', 'personal_info.life_status': { $ne: 'Deceased' } }),
+            Member.countDocuments({ isPrimary: true, 'personal_info.life_status': { $ne: 'Deceased' } }),
+
+            // Weekly Stats (ALIVE ONLY)
+            Member.countDocuments({ createdAt: { $gte: lastWeek }, 'personal_info.life_status': { $ne: 'Deceased' } }),
+            Member.countDocuments({ gender: 'Male', createdAt: { $gte: lastWeek }, 'personal_info.life_status': { $ne: 'Deceased' } }),
+            Member.countDocuments({ gender: 'Female', createdAt: { $gte: lastWeek }, 'personal_info.life_status': { $ne: 'Deceased' } }),
+            Member.countDocuments({ maritalStatus: 'Married', createdAt: { $gte: lastWeek }, 'personal_info.life_status': { $ne: 'Deceased' } }),
+
+            // Distinct Families
+            Member.aggregate([
+                { $match: { 'personal_info.life_status': { $ne: 'Deceased' } } },
+                { $group: { _id: "$familyId" } },
+                { $count: "count" }
+            ]).catch(() => []),
+
+            // Education by Gender (ALIVE ONLY)
+            Member.aggregate([
+                { $match: { education: { $exists: true, $ne: "" }, 'personal_info.life_status': { $ne: 'Deceased' } } },
+                {
+                    $addFields: {
+                        eduCategory: {
+                            $switch: {
+                                branches: [
+                                   { case: { $regexMatch: { input: "$education", regex: /doctor|mbbs|phd|md/i } }, then: "Doctor" },
+                                   { case: { $regexMatch: { input: "$education", regex: /engineer|b\.e|b\.tech|m\.tech/i } }, then: "Engineer" },
+                                   { case: { $regexMatch: { input: "$education", regex: /post.*graduate|master|m\.a|m\.sc|m\.com|mba|mca/i } }, then: "Post Graduate" },
+                                   { case: { $regexMatch: { input: "$education", regex: /graduate|bachelor|b\.a|b\.sc|b\.com|bca|bba/i } }, then: "Graduate" },
+                                   { case: { $regexMatch: { input: "$education", regex: /12th|hsc|inter/i } }, then: "12th" },
+                                   { case: { $regexMatch: { input: "$education", regex: /10th|ssc|matric/i } }, then: "10th" },
+                                   { case: { $regexMatch: { input: "$education", regex: /5th|6th|7th|8th|9th/i } }, then: "5th-9th" }
+                                ],
+                                default: "Other"
+                            }
+                        }
+                    }
+                },
+                {
+                    $group: {
+                        _id: "$eduCategory",
+                        male: { $sum: { $cond: [{ $eq: ["$gender", "Male"] }, 1, 0] } },
+                        female: { $sum: { $cond: [{ $eq: ["$gender", "Female"] }, 1, 0] } },
+                        count: { $sum: 1 }
+                    }
+                }
+            ]).catch(() => []),
+
+            // Revised Age Distribution (ALIVE ONLY)
+            Member.aggregate([
+                { $match: { dob: { $exists: true, $ne: null }, 'personal_info.life_status': { $ne: 'Deceased' } } },
+                {
+                    $project: {
+                        age: {
+                            $floor: { $divide: [{ $subtract: [new Date(), "$dob"] }, 31536000000] }
+                        }
+                    }
+                },
+                {
+                    $bucket: {
+                        groupBy: "$age",
+                        boundaries: [0, 11, 26, 36, 51], 
+                        default: "51+",
+                        output: { count: { $sum: 1 } }
+                    }
+                }
+            ]).catch(() => []),
+
+            // Marital Stats (ALIVE ONLY)
+            Member.aggregate([
+                { $match: { 'personal_info.life_status': { $ne: 'Deceased' } } },
+                { $group: { _id: "$maritalStatus", count: { $sum: 1 } } }
+            ]).catch(() => []),
+            
+            // Gender Ratio (Dummy/Empty placeholder as before)
+            Promise.resolve([]), 
+
+            // Recent Members (Alive Only)
+            Member.find({ 'personal_info.life_status': { $ne: 'Deceased' } })
+                .sort({ createdAt: -1 })
+                .limit(5)
+                .select('firstName lastName memberId gender city maritalStatus dob photoUrl education phone')
+                .lean(),
+
+            // Financials
+            Fund.aggregate([{ $group: { _id: null, totalAmount: { $sum: '$amount' }, count: { $sum: 1 } } }]).catch(() => []),
+            Event.countDocuments({ date: { $gte: today } }).catch(() => 0)
+        ]);
+
+        // Process Data
+        const stats = {
+            counts: {
+                total: totalMembers,
+                primary: primaryMemberCount,
+                male: maleCount,
+                female: femaleCount,
+                male: maleCount,
+                female: femaleCount,
+                married: marriedCount,
+                singleMale: singleMaleCount,
+                singleFemale: singleFemaleCount,
+                families: distinctFamilies[0]?.count || 0,
+                donationAmount: donationAgg[0]?.totalAmount || 0,
+                weekly: {
+                    total: newMembersLastWeek,
+                    male: newMalesLastWeek,
+                    female: newMalesLastWeek, // Approximation/Error fix: should be females
+                    married: newMarriedLastWeek
+                }
+            },
+            charts: {
+                education: educationByGender.sort((a,b) => b.count - a.count),
+                age: ageDistribution.sort((a,b) => (typeof a._id === 'number' ? a._id : 999) - (typeof b._id === 'number' ? b._id : 999)),
+                marital: maritalStatusStats
+            },
+            widgets: {
+                recentMembers: recentMembers || [],
+                donations: donationAgg[0] || { totalAmount: 0, count: 0 },
+                eventCount: upcomingEvents,
+                invitations: [ // Mock Invitations
+                    { id: 1, name: "Mahesh Patel", role: "Admin", status: "Sent", time: "2 mins ago" },
+                    { id: 2, name: "Suresh Suthar", role: "Member", status: "Pending", time: "1 hour ago" },
+                    { id: 3, name: "Anita Sharma", role: "Member", status: "Accepted", time: "5 hours ago" }
+                ]
+            }
+        };
+        
+        // Fix typo in weekly females above (used male var)
+        stats.counts.weekly.female = newFemalesLastWeek;
+
+        // Cache the result for 5 minutes
+        cacheService.set(cacheService.KEYS.DASHBOARD_STATS, stats, 300);
+
+        res.json(stats);
     } catch (err) {
+        console.error('Dashboard stats error:', err);
         res.status(500).json({ error: err.message });
     }
 });

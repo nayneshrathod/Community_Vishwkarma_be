@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const cacheService = require('../services/cache.service');
 
 /**
  * @swagger
@@ -94,6 +95,8 @@ router.post('/', verifyToken, async (req, res) => {
         });
 
         await newFund.save();
+        // Invalidate dashboard cache when fund is created
+        cacheService.invalidateDashboard();
         res.status(201).json(newFund);
     } catch (err) {
         res.status(500).json({ error: err.message });

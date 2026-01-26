@@ -9,6 +9,7 @@ const MemberSchema = new mongoose.Schema({
             first_name: { type: String, required: true },
             middle_name: { type: String },
             last_name: { type: String, required: true },
+            prefix: { type: String }, // श्री, सौ, श्रीमती, स्व.
             maiden_name: { type: String }, // विवाहापूर्वीचे surname (important for search)
             nickname: { type: String }
         },
@@ -90,6 +91,8 @@ const MemberSchema = new mongoose.Schema({
     spouseLastName: { type: String },
     spouseMiddleName: { type: String },
     spouseName: { type: String },
+    spousePrefix: { type: String }, // Prefix for spouse
+    spouseFullName: { type: String }, // Pre-calculated Spouse Full Name
     fullName: { type: String }, // Pre-calculated First + Middle + Last
     stateName: { type: String }, // Pre-resolved state name
     districtName: { type: String }, // Pre-resolved district name
@@ -97,6 +100,8 @@ const MemberSchema = new mongoose.Schema({
     villageName: { type: String }, // Pre-resolved village name
     education: { type: String },
     height: { type: String },
+    prefix: { type: String }, // Pre-calculated or separate prefix
+    lifeStatus: { type: String, enum: ['Alive', 'Deceased'], default: 'Alive' },
 
     // Relationships (Legacy - Maintained for Backward Compatibility)
     familyId: { type: String, default: 'FNew' },
@@ -212,5 +217,17 @@ MemberSchema.index({ 'family_lineage_links.extended_network.maternal.nana_id': 1
 
 // Compound index for pagination optimization (cursor-based)
 MemberSchema.index({ createdAt: -1, _id: 1 });
+
+// ============================================
+// Dashboard-specific Indexes (NEW)
+// ============================================
+// For gender count queries in dashboard stats
+MemberSchema.index({ gender: 1 });
+
+// For matrimony eligible members query (unmarried members by age)
+MemberSchema.index({ gender: 1, maritalStatus: 1, dob: 1 });
+
+// For unique family count
+MemberSchema.index({ familyId: 1 });
 
 module.exports = mongoose.model('Member', MemberSchema);
