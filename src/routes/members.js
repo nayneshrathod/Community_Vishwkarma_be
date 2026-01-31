@@ -4,8 +4,16 @@ const Marriage = require('../models/Marriage');
 const { verifyToken, checkPermission } = require('../middleware/authMiddleware');
 const multer = require('multer');
 const path = require('path');
+const fs = require('fs');
 const cacheService = require('../services/cache.service');
 const router = express.Router();
+
+// Ensure uploads directory exists (Absolute Path for Robustness)
+const uploadDir = path.join(process.cwd(), 'uploads');
+if (!fs.existsSync(uploadDir)) {
+    console.log(`[System] Creating missing uploads directory at: ${uploadDir}`);
+    fs.mkdirSync(uploadDir, { recursive: true });
+}
 
 /**
  * @swagger
@@ -50,7 +58,7 @@ const router = express.Router();
 // Multer Configuration (Disk Storage for Optimization)
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
-        cb(null, 'uploads/');
+        cb(null, uploadDir);
     },
     filename: (req, file, cb) => {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
